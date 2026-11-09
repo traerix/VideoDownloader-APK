@@ -30,7 +30,10 @@ data class DownloadItem(
     val state: ItemState = ItemState.PENDING,
     val progress: Float = 0f,
     val error: String = "",
+    val uri: String? = null,
 )
+
+data class SavedFile(val uri: String, val name: String)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -148,9 +151,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     update(id) { it.copy(state = ItemState.DOWNLOADING, progress = 0f) }
                 }
                 try {
-                    downloadOne(id, url, mode, quality)
+                    val saved = downloadOne(id, url, mode, quality)
                     ok++
-                    ui { update(id) { it.copy(state = ItemState.DONE, progress = 1f) } }
+                    ui {
+                        update(id) {
+                            it.copy(
+                                state = ItemState.DONE,
+                                progress = 1f,
+                                uri = saved.uri,
+                                title = it.title ?: saved.name
+                            )
+                        }
+                    }
                 } catch (e: YoutubeDL.CanceledException) {
                     stopped = true
                     ui { update(id) { it.copy(state = ItemState.STOPPED) } }
@@ -190,7 +202,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun downloadOne(id: String, url: String, mode: Mode, quality: String) {
+    private fun downloadOne(id: String, url: String, mode: Mode, quality: String): SavedFile {
         val app = getApplication<Application>()
         val tmp = File(app.getExternalFilesDir(null) ?: app.filesDir, "tmp/$id")
         tmp.deleteRecursively()
@@ -244,7 +256,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     !f.name.endsWith(".temp") && !f.name.startsWith(".")
             }?.toList().orEmpty()
             if (files.isEmpty()) throw IllegalStateException("រកមិនឃើញឯកសារដែលបានទាញយក")
-            files.forEach { saveToDownloads(it) }
+            val saved = files.map { it to saveToDownloads(it) }
+            val main = saved.maxByOrNull { it.first.length() }!!
+            return SavedFile(main.second.toString(), main.first.nameWithoutExtension)
         } finally {
             currentId = null
             tmp.deleteRecursively()
@@ -252,7 +266,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** ចម្លងឯកសារទៅ Downloads/VideoDownloader (មិនត្រូវការ permission លើ Android 10+) */
-    private fun saveToDownloads(file: File) {
+    private fun saveToDownloads(file: File): android.net.Uri {
         val resolver = getApplication<Application>().contentResolver
         val mime = MimeTypeMap.getSingleton()
             .getMimeTypeFromExtension(file.extension.lowercase()) ?: "application/octet-stream"
@@ -273,6 +287,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         values.clear()
         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
+        return uri
     }
 
     private fun cleanError(e: Exception): String {
